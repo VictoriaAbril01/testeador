@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-testlab}
+      POSTGRES_DB: ${POSTGRES_DB:-testlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-testlab}
+      POSTGRES_DB: ${POSTGRES_DB:-testlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      TESTLAB_API_KEY: ${TESTLAB_API_KEY:?Set TESTLAB_API_KEY in .env}
+      TESTLAB_FERNET_KEY: ${TESTLAB_FERNET_KEY:?Set TESTLAB_FERNET_KEY in .env}
+      REDIS_URL: redis://redis:6379/0
+      TESTLAB_QUEUE_ENABLED: ${TESTLAB_QUEUE_ENABLED:-false}
+      TESTLAB_EVIDENCE_ROOT: /var/lib/testlab/evidence
+      TESTLAB_EVIDENCE_RETENTION_DAYS: ${TESTLAB_EVIDENCE_RETENTION_DAYS:-30}
+    volumes:
+      - evidence_data:/var/lib/testlab/evidence
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+
+  worker:
+    profiles: ["blackbox"]
+    build:
+      context: .
+      dockerfile: workers/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-testlab}
+      POSTGRES_DB: ${POSTGRES_DB:-testlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      TESTLAB_API_KEY: ${TESTLAB_API_KEY:?Set TESTLAB_API_KEY in .env}
+      TESTLAB_FERNET_KEY: ${TESTLAB_FERNET_KEY:?Set TESTLAB_FERNET_KEY in .env}
+      REDIS_URL: redis://redis:6379/0
+      TESTLAB_EVIDENCE_ROOT: /var/lib/testlab/evidence
+      TESTLAB_EVIDENCE_RETENTION_DAYS: ${TESTLAB_EVIDENCE_RETENTION_DAYS:-30}
+    volumes:
+      - evidence_data:/var/lib/testlab/evidence
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  evidence_data:
